@@ -6,7 +6,7 @@
 #include <TFT_eSPI.h> 
 #include "FT62XXTouchScreen.h"
 
-TFT_eSPI tft = TFT_eSPI();
+TFT_eSPI lcd = TFT_eSPI();
 FT62XXTouchScreen touchScreen = FT62XXTouchScreen(TFT_WIDTH, PIN_SDA, PIN_SCL);
 
 #include "lvgl.h"
@@ -18,6 +18,7 @@ static lv_color_t buf[LV_HOR_RES_MAX * 10];
 lv_disp_drv_t disp_drv;
 lv_indev_drv_t indev_drv;
 
+// LVGL Objects
 lv_obj_t *settings;
 lv_obj_t *settings_label;
 lv_obj_t *settings_btn;
@@ -61,12 +62,12 @@ lv_obj_t *settings_ec_text;
 lv_obj_t *settings_delay_text;
 lv_obj_t *settings_brightness_text;
 
-
 lv_obj_t *setting_window;
 
 lv_obj_t *phChart;
 lv_obj_t *ecChart;
 
+// Values
 double ph = 0;
 double ec = 0;
 double target_ph = 6;
@@ -74,38 +75,129 @@ double target_ec = 5;
 bool wl = false;
 double temp = 0;
 
+// Chart Y value
 int ph_max = 7;
 int ph_min = 5;
 int ec_max = 10;
 int ec_min = 0;
 
+// Chart Delay Option
 int delay_option = 2;
 int delay_ms = 1000;
 int delay_current = 0;
 
+// Button Status
 bool settings_btn_pressed = false;
 bool settings_cls_btn_pressed = false;
 
+// Chart Object
 lv_chart_series_t * ph_ser;
 lv_chart_series_t * ec_ser;
 
+// Style Object
 static lv_style_t screen_st;
 static lv_style_t body_st;
 static lv_style_t setting_st;
 static lv_style_t tab_st;
 
+// Brightness Settings
 static const uint8_t backlightChannel = 1;
 uint32_t currentBrightness = 96;
 
-void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
+// LCD Setup
+void disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p);
+bool input_read(lv_indev_drv_t * drv, lv_indev_data_t*data) ;
+
+void update_chart_val(int val, lv_chart_series_t *ser);
+
+// Task Function
+void task_update_settings_button_status(lv_task_t *task);
+void task_update_settings_cls_button_status(lv_task_t *task);
+static void task_update_chart(lv_task_t *task);
+static void task_update_values(lv_task_t *task) ;
+static void task_value_readings(lv_task_t *task);
+static void task_update_brightness(lv_task_t *task);
+static void lv_tick_task(void);
+
+//Style Function
+static void build_style_mainscreen();
+
+// Build Function
+static void build_text_mainscreen();
+static void build_screen();
+static void build_text_settings();
+static void build_chart_mainscreen();
+static void build_body_mainscreen();
+static void build_buttons_mainscreen();
+static void build_buttons_settings();
+static void build_body_settings();
+
+//Text Function
+void create_text(lv_obj_t *text, int posx, int posy, const char *word);
+void create_val_text(lv_obj_t *text, lv_obj_t *body, int posx, int posy);
+
+//Event Function
+static void spinbox_ph_increment_event(lv_obj_t * btn, lv_event_t e);
+static void spinbox_ph_decrement_event(lv_obj_t * btn, lv_event_t e);
+static void spinbox_ec_increment_event(lv_obj_t * btn, lv_event_t e);
+static void spinbox_ec_decrement_event(lv_obj_t * btn, lv_event_t e);
+static void slider_change_brightness_event(lv_obj_t * obj, lv_event_t event);
+static void dropdown_change_delay_event(lv_obj_t * obj, lv_event_t event);
+
+//Widget Function
+static void build_widgets_settings();
+
+static void initialize();
+
+void setup() {
+
+  initialize();
+
+  build_screen();
+
+  // Build order: Style -> Body -> Buttons -> Text -> Others
+
+  // Mainscreen
+  build_style_mainscreen();
+  build_body_mainscreen();
+  build_buttons_mainscreen();
+  build_text_mainscreen();
+  build_chart_mainscreen();
+
+  // Settings
+  build_body_settings();
+  build_buttons_settings();
+  build_text_settings();
+  build_widgets_settings();
+
+  // Tasks
+  lv_task_create(task_value_readings, 100, LV_TASK_PRIO_MID, NULL);
+  lv_task_create(task_update_chart, 100, LV_TASK_PRIO_MID, NULL);
+  lv_task_create(task_update_values, 100, LV_TASK_PRIO_MID, NULL);
+  lv_task_create(task_update_brightness, 100, LV_TASK_PRIO_MID, NULL);
+
+  lv_task_create(task_update_settings_button_status, 10, LV_TASK_PRIO_HIGH, NULL);
+  lv_task_create(task_update_settings_cls_button_status, 10, LV_TASK_PRIO_HIGH, NULL);
+
+  // Screen load
+  lv_scr_load(screen);
+}
+
+void loop() {
+
+  lv_task_handler();
+  delay(5);
+}
+
+void disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
 {
     uint32_t w = (area->x2 - area->x1 + 1);
     uint32_t h = (area->y2 - area->y1 + 1);
 
-    tft.startWrite();
-    tft.setAddrWindow(area->x1, area->y1, w, h);
-    tft.pushColors(&color_p->full, w * h, true);
-    tft.endWrite();
+    lcd.startWrite();
+    lcd.setAddrWindow(area->x1, area->y1, w, h);
+    lcd.pushColors((uint16_t *)&color_p->full, w * h, true);
+    lcd.endWrite();
 
     lv_disp_flush_ready(disp);
 }
@@ -113,7 +205,7 @@ void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color
 uint16_t lastx = 0;
 uint16_t lasty = 0;
 
-bool my_input_read2(lv_indev_drv_t * drv, lv_indev_data_t*data) {
+bool input_read(lv_indev_drv_t * drv, lv_indev_data_t*data) {
   Serial.println("#");
   TouchPoint touchPos = touchScreen.read();
   if (touchPos.touched) {
@@ -161,7 +253,7 @@ void task_update_settings_button_status(lv_task_t *task){
     settings_btn_pressed = true;
   }
   else if (st == LV_BTN_STATE_RELEASED && settings_btn_pressed){
-    lv_obj_set_pos(body_main, -4, -(tft.height() + 8) - 4);
+    lv_obj_set_pos(body_main, -4, -(lcd.height() + 8) - 4);
     lv_obj_set_pos(body_settings, -4, -4);
     settings_btn_pressed = false;
   }
@@ -174,7 +266,7 @@ void task_update_settings_cls_button_status(lv_task_t *task){
   }
   else if (st == LV_BTN_STATE_RELEASED && settings_cls_btn_pressed){
     lv_obj_set_pos(body_main, -4, -4);
-    lv_obj_set_pos(body_settings, -4, -(tft.height() + 8) - 4);
+    lv_obj_set_pos(body_settings, -4, -(lcd.height() + 8) - 4);
     settings_cls_btn_pressed = false;
   }
   
@@ -356,28 +448,28 @@ static void build_body_mainscreen() {
   // Main body object
   body_main = lv_obj_create(screen, NULL);
   lv_obj_add_style(body_main, 0, &screen_st);
-  lv_obj_set_size(body_main, tft.width() + 8, tft.height() + 8);
+  lv_obj_set_size(body_main, lcd.width() + 8, lcd.height() + 8);
   lv_obj_align(body_main, screen, LV_ALIGN_IN_TOP_LEFT, -4, -4);
   lv_obj_set_state(body_main, LV_STATE_DISABLED);
 
   // pH Body Object
   phBody = lv_obj_create(body_main, NULL);
   lv_obj_add_style(phBody, 0, &body_st);
-  lv_obj_set_size(phBody, tft.width() - 32, 112);
+  lv_obj_set_size(phBody, lcd.width() - 32, 112);
   lv_obj_align(phBody, body_main, LV_ALIGN_IN_BOTTOM_MID, 0, -144);
   lv_obj_set_state(phBody, LV_STATE_DISABLED);
 
   // EC Body Object
   ecBody = lv_obj_create(body_main, NULL);
   lv_obj_add_style(ecBody, 0, &body_st);
-  lv_obj_set_size(ecBody, tft.width() - 32, 112);
+  lv_obj_set_size(ecBody, lcd.width() - 32, 112);
   lv_obj_align(ecBody, body_main, LV_ALIGN_IN_BOTTOM_MID, 0, -16);
   lv_obj_set_state(ecBody, LV_STATE_DISABLED);
 
   // Tab Object
   tabBody = lv_obj_create(body_main, NULL);
   lv_obj_add_style(tabBody, 0, &body_st);
-  lv_obj_set_size(tabBody, tft.width(), 56);
+  lv_obj_set_size(tabBody, lcd.width(), 56);
   lv_obj_align(tabBody, body_main, LV_ALIGN_IN_TOP_MID, 0, 0);
   lv_obj_set_state(tabBody, LV_STATE_DISABLED);
 }
@@ -409,43 +501,43 @@ static void build_body_settings() {
   // Main body object
   body_settings = lv_obj_create(screen, NULL);
   lv_obj_add_style(body_settings, 0, &screen_st);
-  lv_obj_set_size(body_settings, tft.width() + 8, tft.height() + 8);
+  lv_obj_set_size(body_settings, lcd.width() + 8, lcd.height() + 8);
   lv_obj_align(body_settings, screen, LV_ALIGN_IN_TOP_LEFT, -4, -4);
   lv_obj_set_state(body_settings, LV_STATE_DISABLED);
-  lv_obj_set_pos(body_settings, 0, -(tft.height() + 8));
+  lv_obj_set_pos(body_settings, 0, -(lcd.height() + 8));
 
   // Settings parameters Object
   settingsParam_ph = lv_obj_create(body_settings, NULL);
   lv_obj_add_style(settingsParam_ph, 0, &body_st);
-  lv_obj_set_size(settingsParam_ph, tft.width() - 32, 48);
+  lv_obj_set_size(settingsParam_ph, lcd.width() - 32, 48);
   lv_obj_align(settingsParam_ph, body_settings, LV_ALIGN_IN_BOTTOM_MID, 0, -210);
   lv_obj_set_state(settingsParam_ph, LV_STATE_DISABLED);
 
   // Settings parameters Object
   settingsParam_ec = lv_obj_create(body_settings, NULL);
   lv_obj_add_style(settingsParam_ec, 0, &body_st);
-  lv_obj_set_size(settingsParam_ec, tft.width() - 32, 48);
+  lv_obj_set_size(settingsParam_ec, lcd.width() - 32, 48);
   lv_obj_align(settingsParam_ec, body_settings, LV_ALIGN_IN_BOTTOM_MID, 0, -144);
   lv_obj_set_state(settingsParam_ec, LV_STATE_DISABLED);
 
   // Settings parameters Object
   settingsParam_delay = lv_obj_create(body_settings, NULL);
   lv_obj_add_style(settingsParam_delay, 0, &body_st);
-  lv_obj_set_size(settingsParam_delay, tft.width() - 32, 48);
+  lv_obj_set_size(settingsParam_delay, lcd.width() - 32, 48);
   lv_obj_align(settingsParam_delay, body_settings, LV_ALIGN_IN_BOTTOM_MID, 0, -80);
   lv_obj_set_state(settingsParam_delay, LV_STATE_DISABLED);
 
   // Settings parameters Object
   settingsParam_brightness = lv_obj_create(body_settings, NULL);
   lv_obj_add_style(settingsParam_brightness, 0, &body_st);
-  lv_obj_set_size(settingsParam_brightness, tft.width() - 32, 48);
+  lv_obj_set_size(settingsParam_brightness, lcd.width() - 32, 48);
   lv_obj_align(settingsParam_brightness, body_settings, LV_ALIGN_IN_BOTTOM_MID, 0, -16);
   lv_obj_set_state(settingsParam_brightness, LV_STATE_DISABLED);
 
   // Tab Object
   tabBody_st = lv_obj_create(body_settings, NULL);
   lv_obj_add_style(tabBody_st, 0, &body_st);
-  lv_obj_set_size(tabBody_st, tft.width(), 56);
+  lv_obj_set_size(tabBody_st, lcd.width(), 56);
   lv_obj_align(tabBody_st, body_settings, LV_ALIGN_IN_TOP_MID, 0, 0);
   lv_obj_set_state(tabBody_st, LV_STATE_DISABLED);
 }
@@ -609,80 +701,4 @@ static void build_style_mainscreen() {
 }
 
 static void initialize() {
-  Serial.begin(115200);
-  lv_init();
-  // Setup tick hook for lv_tick_task
-  esp_err_t err = esp_register_freertos_tick_hook((esp_freertos_tick_cb_t)lv_tick_task); 
-
-  // Enable TFT
-  tft.begin();
-  tft.setRotation(1);
-
-  // Enable Backlight
-  pinMode(TFT_BL, OUTPUT);
-  digitalWrite(TFT_BL,1);
-  ledcSetup(backlightChannel, 100, 8);
-  ledcAttachPin(TFT_BL, backlightChannel);
-  ledcWrite(backlightChannel, currentBrightness);
-
-  // Start TouchScreen
-  touchScreen.begin();
-
-  // Display Buffer
-  lv_disp_buf_init(&disp_buf, buf, NULL, LV_HOR_RES_MAX * 10);
-
-  // Init Display
-  lv_disp_drv_init(&disp_drv);
-  disp_drv.hor_res = 480;
-  disp_drv.ver_res = 320;
-  disp_drv.flush_cb = my_disp_flush;
-  disp_drv.buffer = &disp_buf;
-  lv_disp_drv_register(&disp_drv);
-
-  // Init Touchscreen
-  lv_indev_drv_init(&indev_drv);
-  indev_drv.type = LV_INDEV_TYPE_POINTER;
-  indev_drv.read_cb = my_input_read2;
-  lv_indev_drv_register(&indev_drv);
-}
-
-void setup() {
-
-  initialize();
-
-  build_screen();
-
-  // Build order: Style -> Body -> Buttons -> Text -> Others
-
-  // Mainscreen
-  build_style_mainscreen();
-  build_body_mainscreen();
-  build_buttons_mainscreen();
-  build_text_mainscreen();
-  build_chart_mainscreen();
-
-  // Settings
-  build_body_settings();
-  build_buttons_settings();
-  build_text_settings();
-  build_widgets_settings();
-
-  // Tasks
-  lv_task_create(task_value_readings, 100, LV_TASK_PRIO_MID, NULL);
-  lv_task_create(task_update_chart, 100, LV_TASK_PRIO_MID, NULL);
-  lv_task_create(task_update_values, 100, LV_TASK_PRIO_MID, NULL);
-  lv_task_create(task_update_brightness, 100, LV_TASK_PRIO_MID, NULL);
-
-  lv_task_create(task_update_settings_button_status, 10, LV_TASK_PRIO_HIGH, NULL);
-  lv_task_create(task_update_settings_cls_button_status, 10, LV_TASK_PRIO_HIGH, NULL);
-
-  // Screen load
-  lv_scr_load(screen);
-}
-
-void loop() {
-
-  lv_task_handler();
-  delay(5);
-}
 
