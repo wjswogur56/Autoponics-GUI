@@ -51,6 +51,7 @@ lv_obj_t *spinbox_ph;
 lv_obj_t *spinbox_ec;
 lv_obj_t *dropdown_delay;
 lv_obj_t *slider_brightness;
+lv_obj_t *switch_pumps;
 
 lv_obj_t *pH_text_val;
 lv_obj_t *pH_text_target_val;
@@ -95,6 +96,7 @@ int delay_current = 0; // Current delay count
 // Button Status
 bool settings_btn_pressed = false;
 bool settings_cls_btn_pressed = false;
+bool pumps_on = false;
 
 // Chart Object
 lv_chart_series_t * ph_ser;
@@ -135,6 +137,7 @@ static void build_text_settings();
 static void build_chart_mainscreen();
 static void build_body_mainscreen();
 static void build_buttons_mainscreen();
+static void build_widgets_mainscreen();
 static void build_buttons_settings();
 static void build_body_settings();
 
@@ -165,7 +168,7 @@ void setup() {
   build_screen();
 
   ph = 6;
-  ec = 2;
+  ec = 1;
 
   // Build order: Style -> Body -> Buttons -> Text -> Others
 
@@ -175,6 +178,7 @@ void setup() {
   build_buttons_mainscreen();
   build_text_mainscreen();
   build_chart_mainscreen();
+  build_widgets_mainscreen();
 
   // Settings
   build_body_settings();
@@ -323,16 +327,16 @@ static void task_update_values(lv_task_t *task) {
 
 static void task_value_readings(lv_task_t *task) {
   // Temporary test values
-  ph = ph + (((double)(rand() % 2) / 100) - 0.01);
-  if (ph > target_ph + 0.05){
+  ph = ph + ((double)(rand() % 2) / 100) - ((double)(rand() % 2) / 100);
+  if (ph > target_ph + 0.05 && pumps_on){
     ph = ph - ((double)(rand() % 3) / 100);
   }
-  else if (ph < target_ph - 0.05){
+  else if (ph < target_ph - 0.05 && pumps_on){
     ph = ph + ((double)(rand() % 3) / 100);
   }
 
   ec = ec - ((double)(rand() % 2) / 100);
-  if (ec < target_ec){
+  if (ec < target_ec && pumps_on){
     ec = ec + ((double)(rand() % 4) / 100);
   }
   if (ec < 0){
@@ -367,19 +371,19 @@ static void build_screen() {
 static void build_text_mainscreen() {
   // Water Level text
   WL_text = lv_label_create(tabBody, NULL);
-  create_text(WL_text, 70, 20, "Water Level Status: ");
+  create_text(WL_text, 70, 10, "Water Level Status: ");
 
   // Current Water Level value text
   WL_text_val = lv_label_create(tabBody, NULL);
-  create_val_text(WL_text_val, tabBody, 212, 20);
+  create_val_text(WL_text_val, tabBody, 212, 10);
 
   // Temperature text
   temp_text = lv_label_create(tabBody, NULL);
-  create_text(temp_text, 264, 20, "Temperature: ");
+  create_text(temp_text, 70, 30, "Temperature: ");
 
   // Current Temperature value text
   temp_text_val = lv_label_create(tabBody, NULL);
-  create_val_text(temp_text_val, tabBody, 372, 20);
+  create_val_text(temp_text_val, tabBody, 178, 30);
 
   // Current pH Text
   pH_text = lv_label_create(phBody, NULL);
@@ -533,6 +537,21 @@ static void build_body_mainscreen() {
   lv_obj_set_size(tabBody, lcd.width(), 56);
   lv_obj_align(tabBody, body_main, LV_ALIGN_IN_TOP_MID, 0, 0);
   lv_obj_set_state(tabBody, LV_STATE_DISABLED);
+}
+
+static void switch_pumps_event(lv_obj_t * btn, lv_event_t e){
+if(e == LV_EVENT_VALUE_CHANGED) {
+    pumps_on = !pumps_on;
+  }
+}
+
+static void build_widgets_mainscreen(){
+  /*Create a switch and apply the styles*/
+  switch_pumps = lv_switch_create(tabBody, NULL);
+  lv_obj_set_size(switch_pumps, 64, 36);
+  lv_obj_align(switch_pumps, NULL, LV_ALIGN_CENTER, 144, 2);
+  lv_obj_set_event_cb(switch_pumps, switch_pumps_event);
+  lv_switch_set_anim_time(switch_pumps, 100);
 }
 
 static void button_ph_change_chart_event(lv_obj_t * btn, lv_event_t e)
