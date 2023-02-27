@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <stdlib.h>
 #include <Wire.h>
+#include "lv_png.h"
 
 #include <SPI.h>
 #include <TFT_eSPI.h> 
@@ -29,6 +30,7 @@ lv_obj_t *settings_cls_btn;
 
 lv_obj_t *screen;
 lv_obj_t *body_main;
+lv_obj_t *splashscreen_main;
 lv_obj_t *body_settings;
 
 lv_obj_t *pH_text;
@@ -71,6 +73,9 @@ lv_obj_t *setting_window;
 lv_obj_t *phChart;
 lv_obj_t *ecChart;
 
+lv_obj_t *splashscreen_img;
+LV_IMG_DECLARE(icon);
+
 // Values
 double ph = 0; // Sensor reading, pH
 double ec = 0; // Sensor reading, EC
@@ -93,10 +98,11 @@ int delay_option = 0; // Delay option
 int delay_ms = 1000; // Chart delay in ms
 int delay_current = 0; // Current delay count
 
-// Button Status
+// Status
 bool settings_btn_pressed = false;
 bool settings_cls_btn_pressed = false;
 bool pumps_on = false;
+int spl_scrn = 0;
 
 // Chart Object
 lv_chart_series_t * ph_ser;
@@ -140,6 +146,7 @@ static void build_buttons_mainscreen();
 static void build_widgets_mainscreen();
 static void build_buttons_settings();
 static void build_body_settings();
+static void build_body_splashscreen();
 
 //Text Function
 void create_text(lv_obj_t *text, int posx, int posy, const char *word);
@@ -156,6 +163,8 @@ static void button_ph_change_chart_event(lv_obj_t * btn, lv_event_t e);
 static void button_ec_change_chart_event(lv_obj_t * btn, lv_event_t e);
 static void button_chart_refresh_event(lv_obj_t * btn, lv_event_t e);
 
+static void task_splash_screen(lv_task_t *task);
+
 //Widget Function
 static void build_widgets_settings();
 
@@ -163,17 +172,21 @@ static void initialize();
 
 void setup() {
 
+  
   initialize();
+  lv_png_init();
 
   build_screen();
 
   ph = 6;
   ec = 1;
 
+  build_style_mainscreen();
+
+
   // Build order: Style -> Body -> Buttons -> Text -> Others
 
   // Mainscreen
-  build_style_mainscreen();
   build_body_mainscreen();
   build_buttons_mainscreen();
   build_text_mainscreen();
@@ -186,12 +199,18 @@ void setup() {
   build_text_settings();
   build_widgets_settings();
 
+  //Splashscreen
+  build_body_splashscreen();
+
   // Tasks
   lv_task_create(task_value_readings, 100, LV_TASK_PRIO_MID, NULL);
   lv_task_create(task_update_chart, 1000, LV_TASK_PRIO_MID, NULL);
   lv_task_create(task_update_values, 100, LV_TASK_PRIO_MID, NULL);
   lv_task_create(task_update_brightness, 100, LV_TASK_PRIO_MID, NULL);
 
+  
+  lv_task_t * splash_screen = lv_task_create(task_splash_screen, 3000, LV_TASK_PRIO_MID, NULL);
+  lv_task_set_repeat_count(splash_screen, 1);
   lv_task_create(task_update_settings_button_status, 10, LV_TASK_PRIO_HIGH, NULL);
   lv_task_create(task_update_settings_cls_button_status, 10, LV_TASK_PRIO_HIGH, NULL);
 
@@ -264,6 +283,23 @@ void update_chart_val(int val, lv_chart_series_t *ser){
 }
 
 void task_update_settings_button_status(lv_task_t *task){
+  lv_btn_state_t st = lv_btn_get_state(settings_btn);
+  if (st == LV_BTN_STATE_PRESSED){
+    settings_btn_pressed = true;
+  }
+  else if (st == LV_BTN_STATE_RELEASED && settings_btn_pressed){
+    lv_obj_set_pos(body_main, -4, -(lcd.height() + 8) - 4);
+    lv_obj_set_pos(body_settings, -4, -4);
+    settings_btn_pressed = false;
+  }
+}
+
+void task_splash_screen(lv_task_t *task){
+
+  lv_obj_del(splashscreen_main);
+}
+
+void task_splashscreen(lv_task_t *task){
   lv_btn_state_t st = lv_btn_get_state(settings_btn);
   if (st == LV_BTN_STATE_PRESSED){
     settings_btn_pressed = true;
@@ -537,6 +573,21 @@ static void build_body_mainscreen() {
   lv_obj_set_size(tabBody, lcd.width(), 56);
   lv_obj_align(tabBody, body_main, LV_ALIGN_IN_TOP_MID, 0, 0);
   lv_obj_set_state(tabBody, LV_STATE_DISABLED);
+}
+
+static void build_body_splashscreen() {
+  
+  // Splashscreen object
+  splashscreen_main = lv_obj_create(screen, NULL);
+  lv_obj_add_style(splashscreen_main, 0, &screen_st);
+  lv_obj_set_size(splashscreen_main, lcd.width() + 8, lcd.height() + 8);
+  lv_obj_align(splashscreen_main, screen, LV_ALIGN_IN_TOP_LEFT, -4, -4);
+  lv_obj_set_state(splashscreen_main, LV_STATE_DISABLED);
+
+  LV_IMG_DECLARE(icon);
+  splashscreen_img = lv_img_create(splashscreen_main, NULL);
+  lv_img_set_src(splashscreen_img, &icon);
+  lv_obj_align(splashscreen_img, NULL, LV_ALIGN_IN_TOP_LEFT, 4, 4);
 }
 
 static void switch_pumps_event(lv_obj_t * btn, lv_event_t e){
@@ -857,4 +908,39 @@ static void build_style_mainscreen() {
 }
 
 static void initialize() {
+  Serial.begin(115200);
+  lv_init();
+  // Setup tick hook for lv_tick_task
+  esp_err_t err = esp_register_freertos_tick_hook((esp_freertos_tick_cb_t)lv_tick_task); 
 
+  // Enable TFT
+  lcd.begin();
+  lcd.setRotation(1);
+
+  // Enable Backlight
+  pinMode(TFT_BL, OUTPUT);
+  digitalWrite(TFT_BL,1);
+  ledcSetup(backlightChannel, 100, 8);
+  ledcAttachPin(TFT_BL, backlightChannel);
+  ledcWrite(backlightChannel, currentBrightness);
+
+  // Start TouchScreen
+  touchScreen.begin();
+
+  // Display Buffer
+  lv_disp_buf_init(&disp_buf, buf, NULL, LV_HOR_RES_MAX * 10);
+
+  // Init Display
+  lv_disp_drv_init(&disp_drv);
+  disp_drv.hor_res = 480;
+  disp_drv.ver_res = 320;
+  disp_drv.flush_cb = disp_flush;
+  disp_drv.buffer = &disp_buf;
+  lv_disp_drv_register(&disp_drv);
+
+  // Init Touchscreen
+  lv_indev_drv_init(&indev_drv);
+  indev_drv.type = LV_INDEV_TYPE_POINTER;
+  indev_drv.read_cb = input_read;
+  lv_indev_drv_register(&indev_drv);
+}
