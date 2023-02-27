@@ -21,7 +21,10 @@ lv_indev_drv_t indev_drv;
 // LVGL Objects
 lv_obj_t *settings;
 lv_obj_t *settings_label;
+lv_obj_t *ph_btn;
+lv_obj_t *ec_btn;
 lv_obj_t *settings_btn;
+lv_obj_t *refresh_btn;
 lv_obj_t *settings_cls_btn;
 
 lv_obj_t *screen;
@@ -68,23 +71,26 @@ lv_obj_t *phChart;
 lv_obj_t *ecChart;
 
 // Values
-double ph = 0;
-double ec = 0;
-double target_ph = 6;
-double target_ec = 5;
-bool wl = false;
-double temp = 0;
+double ph = 0; // Sensor reading, pH
+double ec = 0; // Sensor reading, EC
+double target_ph = 6; // Target pH value, default  = 6
+double target_ec = 1; // Target EC value, default  = 1
+bool wl = false; // Sensor reading, Water level 
+double temp = 0; // Sensor reading, tempurature
+double total_ph = 0; // To take average value, ot use in chart 
+double total_ec = 0; // (ie, if chart delay set to 10 mins, chart will update avg val of 10 mins)
 
 // Chart Y value
-int ph_max = 7;
-int ph_min = 5;
-int ec_max = 10;
+int ph_max = 8;
+int ph_min = 4;
+int ec_max = 4;
 int ec_min = 0;
+int points = 24; // Chart point amount
 
 // Chart Delay Option
-int delay_option = 2;
-int delay_ms = 1000;
-int delay_current = 0;
+int delay_option = 0; // Delay option
+int delay_ms = 1000; // Chart delay in ms
+int delay_current = 0; // Current delay count
 
 // Button Status
 bool settings_btn_pressed = false;
@@ -143,6 +149,9 @@ static void spinbox_ec_increment_event(lv_obj_t * btn, lv_event_t e);
 static void spinbox_ec_decrement_event(lv_obj_t * btn, lv_event_t e);
 static void slider_change_brightness_event(lv_obj_t * obj, lv_event_t event);
 static void dropdown_change_delay_event(lv_obj_t * obj, lv_event_t event);
+static void button_ph_change_chart_event(lv_obj_t * btn, lv_event_t e);
+static void button_ec_change_chart_event(lv_obj_t * btn, lv_event_t e);
+static void button_chart_refresh_event(lv_obj_t * btn, lv_event_t e);
 
 //Widget Function
 static void build_widgets_settings();
@@ -154,6 +163,9 @@ void setup() {
   initialize();
 
   build_screen();
+
+  ph = 6;
+  ec = 2;
 
   // Build order: Style -> Body -> Buttons -> Text -> Others
 
@@ -172,7 +184,7 @@ void setup() {
 
   // Tasks
   lv_task_create(task_value_readings, 100, LV_TASK_PRIO_MID, NULL);
-  lv_task_create(task_update_chart, 100, LV_TASK_PRIO_MID, NULL);
+  lv_task_create(task_update_chart, 1000, LV_TASK_PRIO_MID, NULL);
   lv_task_create(task_update_values, 100, LV_TASK_PRIO_MID, NULL);
   lv_task_create(task_update_brightness, 100, LV_TASK_PRIO_MID, NULL);
 
@@ -240,10 +252,10 @@ void create_val_text(lv_obj_t *text, lv_obj_t *body, int posx, int posy){
 }
 
 void update_chart_val(int val, lv_chart_series_t *ser){
-  for(int i=0; i<19; i++){
+  for(int i=0; i<points-1; i++){
     ser->points[i] = ser->points[i+1];
   }
-  ser->points[19] = val;
+  ser->points[points-1] = val;
   
 }
 
@@ -274,11 +286,17 @@ void task_update_settings_cls_button_status(lv_task_t *task){
 
 static void task_update_chart(lv_task_t *task){
 
-  delay_current += 100;
+  delay_current += 1000;
+  total_ph += ph;
+  total_ec += ec;
 
-  if(delay_current > delay_ms){
-    update_chart_val(ph * 10, ph_ser);
-    update_chart_val(ec * 10, ec_ser);
+  if(delay_current >= delay_ms){
+
+    update_chart_val(total_ph / delay_ms * 10000, ph_ser);
+    update_chart_val(total_ec / delay_ms * 10000, ec_ser);
+
+    total_ph = 0;
+    total_ec = 0;
 
     delay_current = 0;
   }
@@ -304,9 +322,23 @@ static void task_update_values(lv_task_t *task) {
 }
 
 static void task_value_readings(lv_task_t *task) {
+  // Temporary test values
+  ph = ph + (((double)(rand() % 2) / 100) - 0.01);
+  if (ph > target_ph + 0.05){
+    ph = ph - ((double)(rand() % 3) / 100);
+  }
+  else if (ph < target_ph - 0.05){
+    ph = ph + ((double)(rand() % 3) / 100);
+  }
 
-  ph = 5 + ((double)(rand() % 200) / 100);
-  ec = ((double)(rand() % 1000) / 100);
+  ec = ec - ((double)(rand() % 2) / 100);
+  if (ec < target_ec){
+    ec = ec + ((double)(rand() % 4) / 100);
+  }
+  if (ec < 0){
+    ec = 0;
+  }
+
   temp = 60 + ((double)(rand() % 500) / 100);
   
   double wl_threshold = rand() % 100;
@@ -335,19 +367,19 @@ static void build_screen() {
 static void build_text_mainscreen() {
   // Water Level text
   WL_text = lv_label_create(tabBody, NULL);
-  create_text(WL_text, 22, 20, "Water Level Status: ");
+  create_text(WL_text, 70, 20, "Water Level Status: ");
 
   // Current Water Level value text
   WL_text_val = lv_label_create(tabBody, NULL);
-  create_val_text(WL_text_val, tabBody, 164, 20);
+  create_val_text(WL_text_val, tabBody, 212, 20);
 
   // Temperature text
   temp_text = lv_label_create(tabBody, NULL);
-  create_text(temp_text, 240, 20, "Temperature: ");
+  create_text(temp_text, 264, 20, "Temperature: ");
 
   // Current Temperature value text
   temp_text_val = lv_label_create(tabBody, NULL);
-  create_val_text(temp_text_val, tabBody, 352, 20);
+  create_val_text(temp_text_val, tabBody, 372, 20);
 
   // Current pH Text
   pH_text = lv_label_create(phBody, NULL);
@@ -407,39 +439,68 @@ static void build_text_settings() {
 static void build_chart_mainscreen() {
   // pH chart
   phChart = lv_chart_create(phBody, NULL);
-  lv_obj_set_size(phChart, 448, 80);
-  lv_obj_align(phChart, NULL, LV_ALIGN_IN_BOTTOM_MID, 0, -4);
+  lv_obj_set_size(phChart, 444, 80);
+  lv_obj_align(phChart, NULL, LV_ALIGN_IN_BOTTOM_RIGHT, -4, -4);
   lv_chart_set_type(phChart, LV_CHART_TYPE_COLUMN);
-  lv_chart_set_range(phChart, 50, 70);
+
+  lv_chart_set_range(phChart, ph_min * 10, ph_max * 10);
+  lv_chart_set_y_tick_texts(phChart, "4\n5\n6\n7\n8", 0, LV_CHART_AXIS_DRAW_LAST_TICK | LV_CHART_AXIS_INVERSE_LABELS_ORDER);
+  lv_chart_set_y_tick_length(phChart, 4, 0);
+
+  // Stylelizing Chart
   lv_obj_set_style_local_bg_opa(phChart, LV_CHART_PART_BG, LV_STATE_DEFAULT, LV_OPA_TRANSP);
   lv_obj_set_style_local_border_opa(phChart, LV_CHART_PART_BG, LV_STATE_DEFAULT, LV_OPA_TRANSP);
-  lv_obj_set_style_local_line_opa(phChart, LV_CHART_PART_SERIES_BG, LV_STATE_DEFAULT, LV_OPA_TRANSP);
-  lv_chart_set_point_count(phChart, 20);
+  lv_chart_set_div_line_count(phChart, ph_max - ph_min - 1, 0);
+  lv_obj_set_style_local_pad_left(phChart, LV_CHART_PART_BG, LV_STATE_DEFAULT, 32);
+  lv_obj_set_style_local_line_opa(phChart, LV_CHART_PART_SERIES_BG, LV_STATE_DEFAULT, LV_OPA_20);
+
+  // Fade effect 
+  lv_obj_set_style_local_bg_opa(phChart, LV_CHART_PART_SERIES, LV_STATE_DEFAULT, LV_OPA_50);
+  lv_obj_set_style_local_bg_grad_dir(phChart, LV_CHART_PART_SERIES, LV_STATE_DEFAULT, LV_GRAD_DIR_VER);
+  lv_obj_set_style_local_bg_main_stop(phChart, LV_CHART_PART_SERIES, LV_STATE_DEFAULT, 255);   
+  lv_obj_set_style_local_bg_grad_stop(phChart, LV_CHART_PART_SERIES, LV_STATE_DEFAULT, 32);     
+
+  lv_chart_set_point_count(phChart, points);
   lv_obj_set_state(phChart, LV_STATE_DISABLED);
 
   ph_ser = lv_chart_add_series(phChart, LV_COLOR_WHITE);
 
-  for(int i=0; i<20; i++){
-    ph_ser->points[i] = 6;
+  for(int i=0; i<points; i++){
+    ph_ser->points[i] = ph_min  * 10;
   }
 
   // EC chart
   ecChart = lv_chart_create(ecBody, NULL);
-  lv_obj_set_size(ecChart, 448, 80);
-  lv_obj_align(ecChart, NULL, LV_ALIGN_IN_BOTTOM_MID, 0, -4);
+  lv_obj_set_size(ecChart, 444, 80);
+  lv_obj_align(ecChart, NULL, LV_ALIGN_IN_BOTTOM_RIGHT, -4, -4);
   lv_chart_set_type(ecChart, LV_CHART_TYPE_COLUMN);
-  lv_chart_set_range(ecChart, 0, 100);
+
+  lv_chart_set_range(ecChart, ec_min, ec_max * 10);
+  lv_chart_set_y_tick_texts(ecChart, "0\n1\n2\n3\n4", 0, LV_CHART_AXIS_DRAW_LAST_TICK | LV_CHART_AXIS_INVERSE_LABELS_ORDER);
+  lv_chart_set_y_tick_length(ecChart, 4, 0);
+
+  // Stylelizing Chart
   lv_obj_set_style_local_bg_opa(ecChart, LV_CHART_PART_BG, LV_STATE_DEFAULT, LV_OPA_TRANSP);
   lv_obj_set_style_local_border_opa(ecChart, LV_CHART_PART_BG, LV_STATE_DEFAULT, LV_OPA_TRANSP);
-  lv_obj_set_style_local_line_opa(ecChart, LV_CHART_PART_SERIES_BG, LV_STATE_DEFAULT, LV_OPA_TRANSP);
-  lv_chart_set_point_count(ecChart, 20);
+  lv_chart_set_div_line_count(ecChart, ec_max - ec_min - 1, 0);
+  lv_obj_set_style_local_pad_left(ecChart, LV_CHART_PART_BG, LV_STATE_DEFAULT, 32);
+
+  // Fade effect 
+  lv_obj_set_style_local_bg_opa(ecChart, LV_CHART_PART_SERIES, LV_STATE_DEFAULT, LV_OPA_50);
+  lv_obj_set_style_local_bg_grad_dir(ecChart, LV_CHART_PART_SERIES, LV_STATE_DEFAULT, LV_GRAD_DIR_VER);
+  lv_obj_set_style_local_bg_main_stop(ecChart, LV_CHART_PART_SERIES, LV_STATE_DEFAULT, 255);   
+  lv_obj_set_style_local_bg_grad_stop(ecChart, LV_CHART_PART_SERIES, LV_STATE_DEFAULT, 32);     
+
+  lv_obj_set_style_local_line_opa(ecChart, LV_CHART_PART_SERIES_BG, LV_STATE_DEFAULT, LV_OPA_20);
+
+  lv_chart_set_point_count(ecChart, points);
   lv_obj_set_state(ecChart, LV_STATE_DISABLED);
 
   ec_ser = lv_chart_add_series(ecChart, LV_COLOR_WHITE);
   lv_chart_refresh(phChart);
 
-  for(int i=0; i<20; i++){
-    ec_ser->points[i] = 6;
+  for(int i=0; i<points; i++){
+    ec_ser->points[i] = ec_min;
   }
 }
 
@@ -474,15 +535,83 @@ static void build_body_mainscreen() {
   lv_obj_set_state(tabBody, LV_STATE_DISABLED);
 }
 
+static void button_ph_change_chart_event(lv_obj_t * btn, lv_event_t e)
+{
+  if(e == LV_EVENT_SHORT_CLICKED || e == LV_EVENT_LONG_PRESSED_REPEAT) {
+    if (lv_chart_get_type(phChart) == LV_CHART_TYPE_COLUMN){
+      lv_chart_set_type(phChart, LV_CHART_TYPE_LINE);
+    }
+    else {
+      lv_chart_set_type(phChart, LV_CHART_TYPE_COLUMN);
+    }
+  }
+}
+
+static void button_ec_change_chart_event(lv_obj_t * btn, lv_event_t e)
+{
+  if(e == LV_EVENT_SHORT_CLICKED || e == LV_EVENT_LONG_PRESSED_REPEAT) {
+    if (lv_chart_get_type(ecChart) == LV_CHART_TYPE_COLUMN){
+      lv_chart_set_type(ecChart, LV_CHART_TYPE_LINE);
+    }
+    else {
+      lv_chart_set_type(ecChart, LV_CHART_TYPE_COLUMN);
+    }
+  }
+}
+
+static void button_chart_refresh_event(lv_obj_t * btn, lv_event_t e)
+{
+  if(e == LV_EVENT_SHORT_CLICKED || e == LV_EVENT_LONG_PRESSED_REPEAT) {
+    for(int i=0; i<points; i++){
+      ph_ser->points[i] = ph_min  * 10;
+    }
+    
+    for(int i=0; i<points; i++){
+      ec_ser->points[i] = ec_min  * 10;
+    }
+  }
+
+  delay_current = 0;
+}
+
 static void build_buttons_mainscreen(){
 
   // Settings Button 
   settings_btn = lv_btn_create(tabBody, NULL);
   lv_obj_set_size(settings_btn, 40, 40);
-  lv_obj_align(settings_btn, NULL, LV_ALIGN_IN_RIGHT_MID, -10, 2);
+  lv_obj_align(settings_btn, NULL, LV_ALIGN_IN_RIGHT_MID, -8, 2);
 
-  lv_obj_t *label_st = lv_label_create(settings_btn, NULL); 
-  lv_label_set_text(label_st, LV_SYMBOL_SETTINGS); 
+  lv_obj_t *settings_btn_st = lv_label_create(settings_btn, NULL); 
+  lv_label_set_text(settings_btn_st, LV_SYMBOL_SETTINGS); 
+
+  // Settings Button 
+  refresh_btn = lv_btn_create(tabBody, NULL);
+  lv_obj_set_size(refresh_btn, 40, 40);
+  lv_obj_align(refresh_btn, NULL, LV_ALIGN_IN_LEFT_MID, 8, 2);
+  lv_obj_set_event_cb(refresh_btn, button_chart_refresh_event);
+
+  lv_obj_t *refresh_btn_st = lv_label_create(refresh_btn, NULL); 
+  lv_label_set_text(refresh_btn_st, LV_SYMBOL_REFRESH); 
+
+  // pH Chart Button
+  ph_btn = lv_btn_create(phBody, NULL);
+  lv_obj_set_size(ph_btn, 32, 16);
+  lv_obj_align(ph_btn, NULL, LV_ALIGN_IN_TOP_RIGHT, -8, 8);
+  lv_obj_set_ext_click_area(ph_btn, 8, 8, 16, 16);
+  lv_obj_set_event_cb(ph_btn, button_ph_change_chart_event);
+
+  lv_obj_t *ph_btn_st = lv_label_create(ph_btn, NULL); 
+  lv_label_set_text(ph_btn_st, LV_SYMBOL_LOOP); 
+
+  // EC Chart Button 
+  ec_btn = lv_btn_create(ecBody, NULL);
+  lv_obj_set_size(ec_btn, 32, 16);
+  lv_obj_align(ec_btn, NULL, LV_ALIGN_IN_TOP_RIGHT, -8, 8);
+  lv_obj_set_ext_click_area(ec_btn, 8, 8, 16, 16);
+  lv_obj_set_event_cb(ec_btn, button_ec_change_chart_event);
+
+  lv_obj_t *ec_btn_st = lv_label_create(ec_btn, NULL); 
+  lv_label_set_text(ec_btn_st, LV_SYMBOL_LOOP); 
 }
 
 static void build_buttons_settings(){
@@ -585,12 +714,15 @@ static void dropdown_change_delay_event(lv_obj_t * obj, lv_event_t event)
 {
     if(event == LV_EVENT_VALUE_CHANGED) {
         delay_option = lv_dropdown_get_selected(obj);
+        delay_current = 0;
+        total_ph = 0;
+        total_ec = 0;
 
         if (delay_option == 0){
-          delay_ms = 100;
+          delay_ms = 1000;
         }
         else if (delay_option == 1){
-          delay_ms = 1000;
+          delay_ms = 10000;
         }
         else if (delay_option == 2){
           delay_ms = 60000;
@@ -601,8 +733,11 @@ static void dropdown_change_delay_event(lv_obj_t * obj, lv_event_t event)
         else if (delay_option == 4){
           delay_ms = 1800000;
         }
-        else {
+        else if (delay_option == 5){
           delay_ms = 3600000;
+        }
+        else {
+          delay_ms = 7200000;
         }
     }
 }
@@ -610,7 +745,7 @@ static void dropdown_change_delay_event(lv_obj_t * obj, lv_event_t event)
 static void build_widgets_settings(){
   // Spinbox for pH
   spinbox_ph = lv_spinbox_create(settingsParam_ph, NULL);
-  lv_spinbox_set_range(spinbox_ph, 50, 70);
+  lv_spinbox_set_range(spinbox_ph, ph_min * 10, ph_max * 10);
   lv_spinbox_set_value(spinbox_ph, target_ph*10);
   lv_spinbox_set_digit_format(spinbox_ph, 2, 1);
   lv_spinbox_step_prev(spinbox_ph);
@@ -633,7 +768,7 @@ static void build_widgets_settings(){
 
   // Spinbox for EC
   spinbox_ec = lv_spinbox_create(settingsParam_ec, NULL);
-  lv_spinbox_set_range(spinbox_ec, 0, 99);
+  lv_spinbox_set_range(spinbox_ec, ec_min * 10, ec_max * 10);
   lv_spinbox_set_value(spinbox_ec, target_ec*10);
   lv_spinbox_set_digit_format(spinbox_ec, 2, 1);
   lv_spinbox_step_prev(spinbox_ec);
@@ -654,12 +789,14 @@ static void build_widgets_settings(){
 
   // Drop down list for chart delay
   lv_obj_t * dropdown_delay = lv_dropdown_create(settingsParam_delay, NULL);
-  lv_dropdown_set_options(dropdown_delay, "0.1 seconds\n"
+  lv_dropdown_set_options(dropdown_delay,
           "1 second\n"
+          "10 seconds\n"
           "1 minute\n"
           "10 minutes\n"
           "30 minutes\n"
-          "1 hour");
+          "1 hour\n"
+          "2 hours");
 
   lv_dropdown_set_dir(dropdown_delay, LV_DROPDOWN_DIR_LEFT);
   lv_dropdown_set_symbol(dropdown_delay, NULL);
