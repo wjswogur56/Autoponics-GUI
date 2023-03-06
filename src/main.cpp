@@ -13,6 +13,8 @@ FT62XXTouchScreen touchScreen = FT62XXTouchScreen(TFT_WIDTH, PIN_SDA, PIN_SCL);
 #include "lvgl.h"
 #include "esp_freertos_hooks.h"
 
+#define SLAVE_ADDRESS 0x08
+
 static lv_disp_buf_t disp_buf;
 static lv_color_t buf[LV_HOR_RES_MAX * 10];
 
@@ -127,6 +129,7 @@ void update_chart_val(int val, lv_chart_series_t *ser);
 // Task Function
 void task_update_settings_button_status(lv_task_t *task);
 void task_update_settings_cls_button_status(lv_task_t *task);
+static void task_check_I2C(lv_task_t *task);
 static void task_update_chart(lv_task_t *task);
 static void task_update_values(lv_task_t *task) ;
 static void task_value_readings(lv_task_t *task);
@@ -172,7 +175,6 @@ static void initialize();
 
 void setup() {
 
-  
   initialize();
   lv_png_init();
 
@@ -182,7 +184,6 @@ void setup() {
   ec = 1;
 
   build_style_mainscreen();
-
 
   // Build order: Style -> Body -> Buttons -> Text -> Others
 
@@ -207,7 +208,7 @@ void setup() {
   lv_task_create(task_update_chart, 1000, LV_TASK_PRIO_MID, NULL);
   lv_task_create(task_update_values, 100, LV_TASK_PRIO_MID, NULL);
   lv_task_create(task_update_brightness, 100, LV_TASK_PRIO_MID, NULL);
-
+  lv_task_create(task_check_I2C, 1000, LV_TASK_PRIO_MID, NULL);
   
   lv_task_t * splash_screen = lv_task_create(task_splash_screen, 3000, LV_TASK_PRIO_MID, NULL);
   lv_task_set_repeat_count(splash_screen, 1);
@@ -216,12 +217,14 @@ void setup() {
 
   // Screen load
   lv_scr_load(screen);
+
 }
 
 void loop() {
 
   lv_task_handler();
   delay(5);
+
 }
 
 void disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
@@ -280,6 +283,15 @@ void update_chart_val(int val, lv_chart_series_t *ser){
   }
   ser->points[points-1] = val;
   
+}
+
+void task_check_I2C(lv_task_t *task){
+  Wire.beginTransmission(SLAVE_ADDRESS);  // Set the slave address to 0x50
+  if (Wire.endTransmission() == 0) {
+    Serial.println("I2C connection established with slave!");
+  } else {
+    Serial.println("Failed to establish I2C connection with slave.");
+  }
 }
 
 void task_update_settings_button_status(lv_task_t *task){
@@ -908,6 +920,7 @@ static void build_style_mainscreen() {
 }
 
 static void initialize() {
+  Wire.begin(18, 19);
   Serial.begin(115200);
   lv_init();
   // Setup tick hook for lv_tick_task
