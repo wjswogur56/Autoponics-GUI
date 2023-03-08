@@ -79,14 +79,26 @@ lv_obj_t *splashscreen_img;
 LV_IMG_DECLARE(icon);
 
 // Values
-double ph = 0; // Sensor reading, pH
-double ec = 0; // Sensor reading, EC
-double target_ph = 6; // Target pH value, default  = 6
-double target_ec = 1; // Target EC value, default  = 1
-bool wl = false; // Sensor reading, Water level 
-double temp = 0; // Sensor reading, tempurature
-double total_ph = 0; // To take average value, ot use in chart 
+double total_ph = 0; // To take average value, or use in chart 
 double total_ec = 0; // (ie, if chart delay set to 10 mins, chart will update avg val of 10 mins)
+
+struct Threshold
+{
+    double target_ph, target_ec;
+    bool PUMP;
+};
+
+static Threshold THRESHOLD{.target_ph = 6.0, .target_ec = 2.0, .PUMP = false};
+
+struct SystemMeasurements
+{
+    double ph;
+    double ec;
+    double temp;
+    bool wl;
+};
+
+static SystemMeasurements system_measurements{.ph = 0.0, .ec = 0.0, .temp = 0.0, .wl = false};
 
 // Chart Y value
 int ph_max = 8;
@@ -103,7 +115,6 @@ int delay_current = 0; // Current delay count
 // Status
 bool settings_btn_pressed = false;
 bool settings_cls_btn_pressed = false;
-bool pumps_on = false;
 int spl_scrn = 0;
 
 // Chart Object
@@ -130,9 +141,11 @@ void update_chart_val(int val, lv_chart_series_t *ser);
 void task_update_settings_button_status(lv_task_t *task);
 void task_update_settings_cls_button_status(lv_task_t *task);
 static void task_check_I2C(lv_task_t *task);
+static void task_read_I2C(lv_task_t *task);
+static void task_write_I2C(lv_task_t *task);
 static void task_update_chart(lv_task_t *task);
 static void task_update_values(lv_task_t *task) ;
-static void task_value_readings(lv_task_t *task);
+static void task_rand_value_readings(lv_task_t *task);
 static void task_update_brightness(lv_task_t *task);
 static void lv_tick_task(void);
 
@@ -179,10 +192,6 @@ void setup() {
   lv_png_init();
 
   build_screen();
-
-  ph = 6;
-  ec = 1;
-
   build_style_mainscreen();
 
   // Build order: Style -> Body -> Buttons -> Text -> Others
@@ -204,11 +213,13 @@ void setup() {
   build_body_splashscreen();
 
   // Tasks
-  lv_task_create(task_value_readings, 100, LV_TASK_PRIO_MID, NULL);
+  lv_task_create(task_rand_value_readings, 500, LV_TASK_PRIO_MID, NULL);
   lv_task_create(task_update_chart, 1000, LV_TASK_PRIO_MID, NULL);
-  lv_task_create(task_update_values, 100, LV_TASK_PRIO_MID, NULL);
+  lv_task_create(task_update_values, 500, LV_TASK_PRIO_MID, NULL);
   lv_task_create(task_update_brightness, 100, LV_TASK_PRIO_MID, NULL);
-  lv_task_create(task_check_I2C, 1000, LV_TASK_PRIO_MID, NULL);
+  lv_task_create(task_check_I2C, 500, LV_TASK_PRIO_MID, NULL);
+  lv_task_create(task_read_I2C, 500, LV_TASK_PRIO_MID, NULL);
+  lv_task_create(task_write_I2C, 500, LV_TASK_PRIO_MID, NULL);
   
   lv_task_t * splash_screen = lv_task_create(task_splash_screen, 3000, LV_TASK_PRIO_MID, NULL);
   lv_task_set_repeat_count(splash_screen, 1);
@@ -294,6 +305,27 @@ void task_check_I2C(lv_task_t *task){
   }
 }
 
+void task_read_I2C(lv_task_t *task){
+  if (Wire.requestFrom(SLAVE_ADDRESS, sizeof system_measurements)) {
+    Wire.readBytes((byte*) &system_measurements, sizeof system_measurements);
+
+    Serial.println("I2C Read:");
+    Serial.println(system_measurements.ph);
+    Serial.println(system_measurements.ec);
+    Serial.println(system_measurements.temp);
+    Serial.println(system_measurements.wl);
+  } 
+  else {
+    Serial.println("could not connect");
+  }
+}
+
+void task_write_I2C(lv_task_t *task){
+  Wire.beginTransmission(SLAVE_ADDRESS);
+  Wire.write((uint8_t*)&THRESHOLD, sizeof(THRESHOLD));
+  Wire.endTransmission();
+}
+
 void task_update_settings_button_status(lv_task_t *task){
   lv_btn_state_t st = lv_btn_get_state(settings_btn);
   if (st == LV_BTN_STATE_PRESSED){
@@ -339,8 +371,8 @@ void task_update_settings_cls_button_status(lv_task_t *task){
 static void task_update_chart(lv_task_t *task){
 
   delay_current += 1000;
-  total_ph += ph;
-  total_ec += ec;
+  total_ph += system_measurements.ph;
+  total_ec += system_measurements.ec;
 
   if(delay_current >= delay_ms){
 
@@ -358,13 +390,13 @@ static void task_update_chart(lv_task_t *task){
 
 static void task_update_values(lv_task_t *task) {
 
-  lv_label_set_text_fmt(pH_text_val, "%.2f" , ph);
-  lv_label_set_text_fmt(EC_text_val, "%.2f" , ec);
-  lv_label_set_text_fmt(pH_text_target_val, "%.1f" , target_ph);
-  lv_label_set_text_fmt(EC_text_target_val, "%.1f" , target_ec);
-  lv_label_set_text_fmt(temp_text_val, "%.1f" , temp);
+  lv_label_set_text_fmt(pH_text_val, "%.2f" , system_measurements.ph);
+  lv_label_set_text_fmt(EC_text_val, "%.2f" , system_measurements.ec);
+  lv_label_set_text_fmt(pH_text_target_val, "%.1f" , THRESHOLD.target_ph);
+  lv_label_set_text_fmt(EC_text_target_val, "%.1f" , THRESHOLD.target_ec);
+  lv_label_set_text_fmt(temp_text_val, "%.1f" , system_measurements.temp);
 
-  if (wl){
+  if (system_measurements.wl){
     lv_label_set_text(WL_text_val, "OK");
   }
   else {
@@ -373,30 +405,30 @@ static void task_update_values(lv_task_t *task) {
   
 }
 
-static void task_value_readings(lv_task_t *task) {
+static void task_rand_value_readings(lv_task_t *task) {
   // Temporary test values
-  ph = ph + ((double)(rand() % 2) / 100) - ((double)(rand() % 2) / 100);
-  if (ph > target_ph + 0.05 && pumps_on){
-    ph = ph - ((double)(rand() % 3) / 100);
+  system_measurements.ph = system_measurements.ph + ((double)(rand() % 2) / 100) - ((double)(rand() % 2) / 100);
+  if (system_measurements.ph > THRESHOLD.target_ph + 0.05 && THRESHOLD.PUMP){
+    system_measurements.ph = system_measurements.ph - ((double)(rand() % 3) / 100);
   }
-  else if (ph < target_ph - 0.05 && pumps_on){
-    ph = ph + ((double)(rand() % 3) / 100);
-  }
-
-  ec = ec - ((double)(rand() % 2) / 100);
-  if (ec < target_ec && pumps_on){
-    ec = ec + ((double)(rand() % 4) / 100);
-  }
-  if (ec < 0){
-    ec = 0;
+  else if (system_measurements.ph < THRESHOLD.target_ph - 0.05 && THRESHOLD.PUMP){
+    system_measurements.ph = system_measurements.ph + ((double)(rand() % 3) / 100);
   }
 
-  temp = 60 + ((double)(rand() % 500) / 100);
+  system_measurements.ec = system_measurements.ec - ((double)(rand() % 2) / 100);
+  if (system_measurements.ec < THRESHOLD.target_ec && THRESHOLD.PUMP){
+    system_measurements.ec = system_measurements.ec + ((double)(rand() % 4) / 100);
+  }
+  if (system_measurements.ec < 0){
+    system_measurements.ec = 0;
+  }
+
+  system_measurements.temp = 60 + ((double)(rand() % 500) / 100);
   
   double wl_threshold = rand() % 100;
-  wl = false;
+  system_measurements.wl = false;
   if (wl_threshold > 10){
-    wl = true;
+    system_measurements.wl = true;
   }
 }
 
@@ -604,7 +636,7 @@ static void build_body_splashscreen() {
 
 static void switch_pumps_event(lv_obj_t * btn, lv_event_t e){
 if(e == LV_EVENT_VALUE_CHANGED) {
-    pumps_on = !pumps_on;
+    THRESHOLD.PUMP = !(THRESHOLD.PUMP);
   }
 }
 
@@ -757,7 +789,7 @@ static void spinbox_ph_increment_event(lv_obj_t * btn, lv_event_t e)
 {
     if(e == LV_EVENT_SHORT_CLICKED || e == LV_EVENT_LONG_PRESSED_REPEAT) {
         lv_spinbox_increment(spinbox_ph);
-        target_ph = ((double)lv_spinbox_get_value(spinbox_ph)) / 10;
+        THRESHOLD.target_ph = ((double)lv_spinbox_get_value(spinbox_ph)) / 10;
     }
 }
 
@@ -765,7 +797,7 @@ static void spinbox_ph_decrement_event(lv_obj_t * btn, lv_event_t e)
 {
     if(e == LV_EVENT_SHORT_CLICKED || e == LV_EVENT_LONG_PRESSED_REPEAT) {
         lv_spinbox_decrement(spinbox_ph);
-        target_ph = ((double)lv_spinbox_get_value(spinbox_ph)) / 10;
+        THRESHOLD.target_ph = ((double)lv_spinbox_get_value(spinbox_ph)) / 10;
     }
 }
 
@@ -773,7 +805,7 @@ static void spinbox_ec_increment_event(lv_obj_t * btn, lv_event_t e)
 {
     if(e == LV_EVENT_SHORT_CLICKED || e == LV_EVENT_LONG_PRESSED_REPEAT) {
         lv_spinbox_increment(spinbox_ec);
-        target_ec = ((double)lv_spinbox_get_value(spinbox_ec)) / 10;
+        THRESHOLD.target_ec = ((double)lv_spinbox_get_value(spinbox_ec)) / 10;
     }
 }
 
@@ -781,7 +813,7 @@ static void spinbox_ec_decrement_event(lv_obj_t * btn, lv_event_t e)
 {
     if(e == LV_EVENT_SHORT_CLICKED || e == LV_EVENT_LONG_PRESSED_REPEAT) {
         lv_spinbox_decrement(spinbox_ec);
-        target_ec = ((double)lv_spinbox_get_value(spinbox_ec)) / 10; 
+        THRESHOLD.target_ec = ((double)lv_spinbox_get_value(spinbox_ec)) / 10; 
     }
 }
 
@@ -828,7 +860,7 @@ static void build_widgets_settings(){
   // Spinbox for pH
   spinbox_ph = lv_spinbox_create(settingsParam_ph, NULL);
   lv_spinbox_set_range(spinbox_ph, ph_min * 10, ph_max * 10);
-  lv_spinbox_set_value(spinbox_ph, target_ph*10);
+  lv_spinbox_set_value(spinbox_ph, THRESHOLD.target_ph*10);
   lv_spinbox_set_digit_format(spinbox_ph, 2, 1);
   lv_spinbox_step_prev(spinbox_ph);
   lv_obj_set_width(spinbox_ph, 40);
@@ -851,7 +883,7 @@ static void build_widgets_settings(){
   // Spinbox for EC
   spinbox_ec = lv_spinbox_create(settingsParam_ec, NULL);
   lv_spinbox_set_range(spinbox_ec, ec_min * 10, ec_max * 10);
-  lv_spinbox_set_value(spinbox_ec, target_ec*10);
+  lv_spinbox_set_value(spinbox_ec, THRESHOLD.target_ec*10);
   lv_spinbox_set_digit_format(spinbox_ec, 2, 1);
   lv_spinbox_step_prev(spinbox_ec);
   lv_obj_set_width(spinbox_ec, 40);
