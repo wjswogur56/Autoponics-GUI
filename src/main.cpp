@@ -391,9 +391,9 @@ static void task_update_chart(lv_task_t *task){
 static void task_update_values(lv_task_t *task) {
 
   lv_label_set_text_fmt(pH_text_val, "%.2f" , system_measurements.ph);
-  lv_label_set_text_fmt(EC_text_val, "%.2fS" , system_measurements.ec);
+  lv_label_set_text_fmt(EC_text_val, "%.2f mS/cm" , system_measurements.ec);
   lv_label_set_text_fmt(pH_text_target_val, "%.1f" , THRESHOLD.target_ph);
-  lv_label_set_text_fmt(EC_text_target_val, "%.1fS" , THRESHOLD.target_ec);
+  lv_label_set_text_fmt(EC_text_target_val, "%.1f mS/cm" , THRESHOLD.target_ec);
   lv_label_set_text_fmt(temp_text_val, "%.1f°C" , system_measurements.temp);
   lv_label_set_text(WL_text_val, (system_measurements.wl ? "OK" : "LOW"));
   
